@@ -1,0 +1,39 @@
+{
+  "network": "genlayer testnet bradbury phase 2",
+  "chain_id": 4221,
+  "auth_capture_escrow": {
+    "address": "0x14b6E956558ffc07E818e999497d018b38a5500F",
+    "tx": "0x175fe938e776fac3bf6909e5fb87035ef46413d7025daf7bf2988045b9c6e89e"
+  },
+  "compiler": "0.8.28+commit.7893614a.Emscripten.clang",
+  "erc3009_collector": {
+    "address": "0x0ae002c21d9c3616B0eCefF9a07Aa3B0f1C696bD",
+    "tx": "0x3837714cced4234ad36f3d13407631c7f5b4bebbe4e822893e4ac6a426afb112"
+  },
+  "test_usdc": {
+    "address": "0x1A85dd374273a21cB0e19a9083Af520C61F96145",
+    "tx": "0x325c0007e81f8dd6373f0d14d8aba8c604c491d837d50e5bf7319b1a36b30821"
+  },
+  "operator": {
+    "address": "0x53bF40B3253535CfD71919dd23d73327C0149dD3",
+    "tx": "0x7aa0bbb92d1f3d7223eecbd64c278479d171c24ffc96bc00f68bd866d5f90ee2"
+  },
+  "court": {
+    "address": "0x2F9c9CbaCd282240D7AF1389815BAd6ac0c60b87",
+    "tx": "0x9c7bca9e0f9641a38458517084d190a4ddd5043fa859f9b66f664cd13c9886d6",
+    "deployed_at": "2026-11-12T20:30:09.828Z"
+  },
+  "wired": true,
+  "listings": {
+    "weather-now": {
+      "id": 0,
+      "seller": "0x0b57877ec84D96b672CD47D8Ea4424283fDB9F6C",
+      "tx": "0xd96874d891eeebd81406cf6f9d49057ec63a72997fc460ae35a84ec6d059887f"
+    },
+    "weather-budget": {
+      "id": 1,
+      "seller": "0xBdB591cDdd787956a4fB17a8f4C325366525EfD2",
+      "tx": "0x3c0059110bdfc2e52b9adf1f891cbc409e5a2d95bc33d3dfae67b5ecad4a4997"
+    }
+  }
+}

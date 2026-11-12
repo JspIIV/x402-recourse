@@ -1,0 +1,3 @@
+[submodule "vendor/commerce-payments"]
+	path = vendor/commerce-payments
+	url = https://github.com/base/commerce-payments

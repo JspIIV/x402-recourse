@@ -1,0 +1,20 @@
+{
+  "name": "recourse",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ethers": "^6.17.0",
+    "genlayer-js": "^2.0.0-rc.2",
+    "solc": "^0.8.36"
+  },
+  "version": "1.0.0",
+  "description": "Recourse: buyer recourse for x402. Internet Court as the custom operator of x402 auth-capture, over Coinbase commerce-payments escrow",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JspIIV/recourse.git"
+  },
+  "scripts": {
+    "test": "python tests/recourse_rules.py"
+  }
+}
