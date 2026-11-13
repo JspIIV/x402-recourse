@@ -1,0 +1,6 @@
+{
+  "functions": { "api/[seller].mjs": { "maxDuration": 60 } },
+  "outputDirectory": "docs",
+  "buildCommand": "",
+  "installCommand": "npm install --omit=dev"
+}

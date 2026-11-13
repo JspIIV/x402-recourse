@@ -1,0 +1,365 @@
+<script type="module">
+// Bundled builds: one file each instead of hundreds, so the module CDN does not rate-limit the page.
+import { createClient } from "https://esm.sh/genlayer-js@2.0.0-rc.2?bundle";
+import { testnetBradbury } from "https://esm.sh/genlayer-js@2.0.0-rc.2/chains?bundle";
+import { BrowserProvider, JsonRpcProvider, Contract, Interface, AbiCoder, formatUnits, ZeroHash, ZeroAddress } from "https://esm.sh/ethers@6.13.4";
+import { signPayment, unb64, b64 } from "./x402.mjs";
+
+const DEP = __DEP__;
+const PROOF = __PROOF__;
+// Same origin when the page is served with its sellers (Vercel); the deployed sellers otherwise (GitHub Pages).
+const API = location.hostname.endsWith("github.io") ? "__SELLERS__" : location.origin;
+const RPC = "https://rpc-bradbury.genlayer.com";
+const CHAIN_RPC = "https://rpc.testnet-chain.genlayer.com";
+const EXPLORER = "https://scan.bradbury.genlayer.com";
+const CHAIN_EXPLORER = "https://scan.testnet-chain.genlayer.com";
+const CHAIN_ID_HEX = "0x107d";
+const CHAIN_PARAMS = { chainId: CHAIN_ID_HEX, chainName: "GenLayer Bradbury", nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 }, rpcUrls: [CHAIN_RPC], blockExplorerUrls: [CHAIN_EXPLORER] };
+const PI = "tuple(address operator,address payer,address receiver,address token,uint120 maxAmount,uint48 preApprovalExpiry,uint48 authorizationExpiry,uint48 refundExpiry,uint16 minFeeBps,uint16 maxFeeBps,address feeReceiver,uint256 salt)";
+const OP_ABI = [
+  "function listingCount() view returns (uint256)",
+  "function listingFacts(uint32) view returns (address seller,address token,uint120 price,uint32 deliverWithin,uint32 window,bool active)",
+  "function listingTitle(uint256) view returns (string)", "function listingOffer(uint32) view returns (string)",
+  "function paymentCount() view returns (uint256)", "function paymentHashes(uint256) view returns (bytes32)",
+  "function facts(bytes32) view returns (uint8 status,uint32 listingId,address payer,address seller,uint120 amount,uint48 deliveredAt,uint48 disputedAt,uint48 captureDeadline)",
+  "function ruling(bytes32) view returns (bool ruled,bool delivered,bytes32 reason)",
+  "function offerOf(bytes32) view returns (string)", "function requestOf(bytes32) view returns (string)", "function responseOf(bytes32) view returns (string)",
+  "function dispute(bytes32)", "function capture(bytes32)", "function voidUndelivered(bytes32)", "function rule(bytes32,bool,bytes32)",
+  "function deliver(bytes32,string,bytes32,string)", "function close(uint32)",
+  `function authorize(${PI} p,uint256 amount,address tokenCollector,bytes collectorData)`,
+];
+const ESCROW_ABI = [`function capture(${PI} p,uint256 amount,uint16 feeBps,address feeReceiver)`,
+  "error InvalidSender(address sender, address expected)", "error PaymentAlreadyCollected(bytes32 paymentInfoHash)", "error AfterAuthorizationExpiry(uint48 timestamp, uint48 expiry)", "error BeforeAuthorizationExpiry(uint48 timestamp, uint48 expiry)", "error ZeroAuthorization(bytes32 paymentInfoHash)"];
+const USDC_ABI = ["function mint(address to,uint256 amount)", "function balanceOf(address) view returns (uint256)"];
+const STATUS = ["None", "Held", "Delivered", "Disputed", "Captured", "Voided"];
+// Past its capture deadline an open payment can no longer be captured; the buyer may reclaim it from the escrow.
+const shownStatus = (f) => { const st = STATUS[Number(f.status)]; return ["Held", "Delivered", "Disputed"].includes(st) && Math.floor(Date.now() / 1000) > Number(f.captureDeadline) ? "Expired" : st; };
+
+// The public RPC rate-limits bursts, so reads go in small batches, a few at a time.
+class PatientProvider extends JsonRpcProvider {
+  // A read the public RPC throttles comes back as an error with no revert data; it is tried again, a few times.
+  async send(method, params) {
+    for (let i = 0; ; i++) {
+      try { return await super.send(method, params); }
+      catch (e) {
+        const said = String(e?.message || "") + " " + JSON.stringify(e?.info?.error || e?.error || {});
+        const throttled = /-32017|rate limit|429|too many|failed to fetch|timeout|missing revert data/i.test(said);
+        if (!throttled || i >= 4 || method === "eth_sendRawTransaction") throw e;
+        await new Promise((r) => setTimeout(r, 1200 * (i + 1)));
+      }
+    }
+  }
+}
+const chain = new PatientProvider(CHAIN_RPC, 4221, { staticNetwork: true, batchMaxCount: 8, batchStallTime: 20 });
+async function pool(items, n, fn) {
+  const out = new Array(items.length); let next = 0;
+  await Promise.all([...Array(Math.min(n, items.length))].map(async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); } }));
+  return out;
+}
+const op = new Contract(DEP.operator, OP_ABI, chain);
+const usdc = new Contract(DEP.test_usdc, USDC_ABI, chain);
+const errs = new Interface(ESCROW_ABI);
+const reader = createClient({ chain: testnetBradbury, endpoint: RPC });
+let account = null, eip1193 = null;
+const realFetch = window.fetch.bind(window);
+// The SDK quotes fees with an eth_call that has a gas price and no sender, which the node refuses from the zero address.
+window.fetch = async (input, init) => {
+  if (account && init && typeof init.body === "string" && init.body.includes('"eth_call"')) {
+    const body = JSON.parse(init.body);
+    for (const req of Array.isArray(body) ? body : [body]) if (req.method === "eth_call" && req.params?.[0] && !req.params[0].from) req.params[0].from = account;
+    return realFetch(input, { ...init, body: JSON.stringify(body) });
+  }
+  return realFetch(input, init);
+};
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const short = (a) => (a ? `${String(a).slice(0, 6)}...${String(a).slice(-4)}` : "");
+const usd = (v) => formatUnits(v, 6).replace(/\.?0+$/, "") + " tUSDC";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const nowS = () => Math.floor(Date.now() / 1000);
+const chainLink = (h, t) => `<a href="${CHAIN_EXPLORER}/tx/${h}" target="_blank" rel="noopener">${t || short(h)}</a>`;
+const glLink = (h, t) => `<a href="${EXPLORER}/tx/${h}" target="_blank" rel="noopener">${t || short(h)}</a>`;
+const store = { get: (k) => { try { return JSON.parse(localStorage.getItem("recourse." + k)); } catch { return null; } }, set: (k, v) => localStorage.setItem("recourse." + k, JSON.stringify(v)) };
+function say(html, tone = "") { const s = $("status"); s.innerHTML = html; s.className = "status " + tone; }
+function reasonOf(e) {
+  const seen = new Set(), texts = [];
+  (function walk(x, d) { if (x == null || d > 5) return; if (typeof x === "string") { texts.push(x); return; } if (typeof x !== "object" || seen.has(x)) return; seen.add(x);
+    for (const k of Object.getOwnPropertyNames(x)) { try { walk(x[k], d + 1); } catch {} } })(e, 0);
+  for (const t of texts) { const m = t.match(/Recourse:[\w-]+/); if (m) return m[0]; }
+  for (const t of texts) { const m = t.match(/0x[0-9a-fA-F]{8,}/g); if (m) for (const d of m) { try { const p = errs.parseError(d); if (p) return p.name; } catch {} } }
+  for (const t of texts) { const m = t.match(/0x08c379a0[0-9a-fA-F]+/); if (m) { try { return AbiCoder.defaultAbiCoder().decode(["string"], "0x" + m[0].slice(10))[0]; } catch {} } }
+  if (e?.code === "ACTION_REJECTED" || e?.code === 4001) return "Rejected in the wallet.";
+  if (texts.some((t) => /-32017|Rate Limit/i.test(t))) return "The public GenLayer Chain RPC is rate limiting this browser; try again in a few seconds.";
+  return (e?.shortMessage || e?.message || String(e)).slice(0, 180);
+}
+
+// ------------------------------------------------------------------ hero: one payment, start to end, on a loop
+(async function hero() {
+  const steps = [...document.querySelectorAll("#hero-steps li")], stamp = $("hero-stamp");
+  for (let round = 0; ; round++) {
+    steps.forEach((s) => s.classList.remove("on")); stamp.classList.remove("show");
+    const disputed = round % 2 === 0;
+    for (let i = 0; i < steps.length; i++) { if (!disputed && i >= 3) break; await sleep(700); steps[i].classList.add("on"); }
+    await sleep(600);
+    stamp.textContent = disputed ? "Voided" : "Captured"; stamp.className = "stamp big " + (disputed ? "Voided" : "Captured") + " show";
+    await sleep(2600);
+  }
+})();
+
+// ------------------------------------------------------------------ wallet
+async function ensureWallet() {
+  eip1193 = window.ethereum;
+  if (!eip1193) throw new Error("No wallet found. Reading needs none; to buy, open this page in a browser with MetaMask.");
+  if (!account) { const a = await eip1193.request({ method: "eth_requestAccounts" }); account = a && a[0]; $("connect").textContent = short(account); }
+  const cur = await eip1193.request({ method: "eth_chainId" });
+  if (String(cur).toLowerCase() !== CHAIN_ID_HEX) {
+    try { await eip1193.request({ method: "wallet_switchEthereumChain", params: [{ chainId: CHAIN_ID_HEX }] }); }
+    catch (err) { if (err && (err.code === 4902 || err.code === -32603)) await eip1193.request({ method: "wallet_addEthereumChain", params: [CHAIN_PARAMS] }); else throw err; }
+  }
+  return await new BrowserProvider(eip1193).getSigner();
+}
+async function balance() { if (account) $("bal").textContent = usd(await usdc.balanceOf(account)); }
+$("connect").onclick = async () => { try { await ensureWallet(); $("wstatus").textContent = "Connected " + short(account) + " on GenLayer Bradbury."; balance(); } catch (e) { $("wstatus").textContent = reasonOf(e); } };
+$("fund").onclick = async () => {
+  try { const s = await ensureWallet(); $("wstatus").textContent = "Minting 5 test USDC ...";
+    await (await new Contract(DEP.test_usdc, USDC_ABI, s).mint(account, 5_000_000n)).wait();
+    $("wstatus").textContent = "5 test USDC minted to " + short(account) + "."; balance();
+  } catch (e) { $("wstatus").textContent = reasonOf(e); }
+};
+
+// ------------------------------------------------------------------ the counter
+let LISTINGS = [];
+async function loadListings() {
+  const n = Number(await op.listingCount());
+  LISTINGS = await Promise.all([...Array(n).keys()].map(async (id) => {
+    const [f, title, offer] = await Promise.all([op.listingFacts(id), op.listingTitle(id), op.listingOffer(id)]);
+    const slug = Object.entries(DEP.listings).find(([, l]) => l.id === id)?.[0];
+    return { id, slug, seller: f.seller, price: f.price, deliverWithin: Number(f.deliverWithin), window: Number(f.window), active: f.active, title, offer };
+  }));
+  $("listings").innerHTML = LISTINGS.filter((l) => l.slug).map((l) => `
+    <div class="listing">
+      <div class="top"><h3>${esc(l.title)}</h3><span class="price">${usd(l.price)}</span></div>
+      <div class="offer">${esc(l.offer)}</div>
+      <div class="meta"><span>seller ${short(l.seller)}</span><span>delivers within ${l.deliverWithin / 60} min</span><span>dispute window ${l.window / 60} min</span><span>listing #${l.id}</span></div>
+      <div class="row"><input type="text" id="q-${l.slug}" value="${l.slug === "weather-now" ? "Istanbul" : "Istanbul"}" maxlength="200" aria-label="City" /><button class="btn" data-buy="${l.slug}">Pay and call</button></div>
+    </div>`).join("");
+  document.querySelectorAll("[data-buy]").forEach((b) => (b.onclick = () => buy(b.dataset.buy)));
+}
+
+async function buy(slug) {
+  const l = LISTINGS.find((x) => x.slug === slug);
+  const request = $("q-" + slug).value.trim();
+  if (!request) return say("Name a city first.", "bad");
+  if (!API) return say("The sellers are not deployed for this copy of the page yet.", "bad");
+  try {
+    const signer = await ensureWallet();
+    if ((await usdc.balanceOf(account)) < l.price) return say("You need " + usd(l.price) + ". Press <b>Get 5 test USDC</b> first.", "bad");
+    say("Asking the seller ... (an unpaid call is answered with 402)", "busy");
+    const url = `${API}/api/${slug}?q=${encodeURIComponent(request)}`;
+    const first = await fetch(url);
+    if (first.status !== 402) throw new Error("expected 402, got " + first.status);
+    const required = unb64(first.headers.get("PAYMENT-REQUIRED"));
+    say("Sign the payment in MetaMask. It costs no gas: it authorizes the escrow to hold " + usd(l.price) + " for this request.", "busy");
+    const paid = await signPayment({ wallet: signer, required, listingId: l.id, request, collector: DEP.erc3009_collector });
+    say("The seller is relaying your signature to the operator, running the service and recording its response on chain ...", "busy");
+    const second = await fetch(url, { headers: { "PAYMENT-SIGNATURE": b64(paid) } });
+    const body = await second.json();
+    if (second.status !== 200) throw new Error(body.error || "payment refused (" + second.status + ")");
+    store.set("mine", { hash: body.paymentHash, slug, request, authorizeTx: body.authorizeTx, deliverTx: body.deliverTx });
+    say(`Paid and delivered. The money is held in the escrow; the window is open for ${l.window / 60} minutes. ${chainLink(body.deliverTx, "delivery")}`, "good");
+    balance(); mine(); loadRecord();
+  } catch (e) { say(reasonOf(e), "bad"); }
+}
+
+// ------------------------------------------------------------------ your receipt
+let tick = null;
+async function mine() {
+  const m = store.get("mine");
+  if (!m) return;
+  const [f, request, response, offer, ruling] = await Promise.all([op.facts(m.hash), op.requestOf(m.hash), op.responseOf(m.hash), op.offerOf(m.hash), op.ruling(m.hash)]);
+  const l = LISTINGS.find((x) => x.id === Number(f.listingId)) || { window: 300, title: "" };
+  const st = STATUS[Number(f.status)];
+  const closes = Number(f.deliveredAt) + l.window;
+  let kase = null;
+  if (ruling.ruled) { try { kase = JSON.parse(await reader.readContract({ address: DEP.court, functionName: "case", args: [m.hash] })); } catch {} }
+  $("mine").innerHTML = `
+    <div class="head"><b>YOUR RECEIPT</b>${esc(l.title)}</div>
+    <div class="ln"><span>payment</span><span>${short(m.hash)}</span></div>
+    <div class="ln"><span>buyer</span><span>${short(f.payer)}</span></div>
+    <div class="ln"><span>seller</span><span>${short(f.seller)}</span></div>
+    <div class="ln"><span>held</span><span>${usd(f.amount)}</span></div>
+    <div class="sep"></div>
+    <div>request</div><div class="txt">${esc(request)}</div>
+    <div>response</div><div class="txt">${esc(response)}</div>
+    ${kase ? `<div class="sep"></div><div>Internet Court</div><div class="txt">${esc(kase.verdict)}: ${esc(kase.why)}</div>` : ""}
+    <div class="sep"></div>
+    <div class="ln"><span>status</span><span><span class="stamp ${st}">${st}</span></span></div>`;
+  const stage = { Held: 1, Delivered: 2, Disputed: 3, Captured: 5, Voided: 5 }[st] ?? 0;
+  document.querySelectorAll("#track span").forEach((el, i) => (el.className = i < stage ? "done" : i === stage ? "on" : ""));
+  const mineIsPayer = account && account.toLowerCase() === f.payer.toLowerCase();
+  clearInterval(tick);
+  const update = () => {
+    const left = closes - nowS();
+    $("dispute").disabled = !(st === "Delivered" && left > 0);
+    $("dispute").textContent = st === "Delivered" && left > 0 ? `Dispute it (${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} left)` : "Dispute it";
+    $("settle").disabled = !(st === "Delivered" && left <= 0);
+    $("ask").disabled = !(st === "Disputed" && !ruling.ruled);
+  };
+  update(); tick = setInterval(update, 1000);
+  if (!account && st === "Delivered") $("dispute").title = "Connect the wallet that paid.";
+  return { f, st, mineIsPayer };
+}
+$("dispute").onclick = async () => {
+  const m = store.get("mine"); if (!m) return;
+  try { const s = await ensureWallet(); say("Disputing in MetaMask ...", "busy");
+    const tx = await new Contract(DEP.operator, OP_ABI, s).dispute(m.hash); await tx.wait();
+    say(`Disputed. The money cannot move until Internet Court rules. ${chainLink(tx.hash, "transaction")}`, "good"); mine(); loadRecord();
+  } catch (e) { say(reasonOf(e), "bad"); }
+};
+$("settle").onclick = () => settle(store.get("mine")?.hash, "capture");
+$("ask").onclick = () => askCourt(store.get("mine")?.hash, (t, tone) => say(t, tone));
+
+async function askCourt(hash, show) {
+  try {
+    await ensureWallet();
+    const c = createClient({ chain: testnetBradbury, endpoint: RPC, account, provider: eip1193 });
+    const gasLimit = 400000n, maxGasPrice = 1000000000n, budget = gasLimit * maxGasPrice;
+    const feeParams = AbiCoder.defaultAbiCoder().encode(["uint256", "uint256"], [gasLimit, maxGasPrice]);
+    // The ruling is a call the court sends to the operator when its verdict is final; this budget pays for it.
+    const messageAllocations = [{ messageType: 0, onAcceptance: false, recipient: DEP.operator, budget, feeParams }];
+    const quote = await c.estimateTransactionFees({ totalMessageFees: budget, messageAllocations });
+    show("Approve the request to Internet Court in MetaMask ...", "busy");
+    const hash2 = await c.writeContract({ address: DEP.court, functionName: "rule", args: [hash], value: 0n, fees: { distribution: quote.distribution, feeValue: quote.feeValue, messageAllocations } });
+    for (let i = 0; i < 400; i++) {
+      await sleep(6000);
+      let tx = null; try { tx = await reader.getTransaction({ hash: hash2 }); } catch {}
+      const name = String(tx?.statusName || "");
+      if (name === "FINALIZED") {
+        for (let k = 0; k < 30; k++) { const f = await op.facts(hash); if (Number(f.status) >= 4) break; show(`Final. Waiting for the court's own call to reach the operator ... ${glLink(hash2, "round")}`, "busy"); await sleep(5000); }
+        const kase = JSON.parse(await reader.readContract({ address: DEP.court, functionName: "case", args: [hash] }));
+        show(`Internet Court ruled <b>${esc(kase.verdict || "nothing")}</b>${kase.verdict ? (kase.verdict === "DELIVERED" ? ": the payment went to the seller." : ": the payment went back to the buyer.") : "."} ${glLink(hash2, "round")}`, kase.verdict === "NOT_DELIVERED" ? "good" : "");
+        mine(); loadRecord(); balance(); return;
+      }
+      if (["UNDETERMINED", "CANCELED", "LEADER_TIMEOUT", "VALIDATORS_TIMEOUT"].includes(name)) { show(`The round ended ${name} and changed nothing. ${glLink(hash2, "round")}`, "bad"); return; }
+      show(name === "ACCEPTED" ? `Accepted by the validators. The court acts only once its verdict is final ... ${glLink(hash2, "round")}` : `The judges are reading the offer, the request and the response ... ${(i + 1) * 6}s, ${name || "waiting for the network"}. ${glLink(hash2, "round")}`, "busy");
+    }
+  } catch (e) { show(reasonOf(e), "bad"); }
+}
+async function settle(hash, how) {
+  try { const s = await ensureWallet();
+    const c = new Contract(DEP.operator, OP_ABI, s);
+    const tx = how === "capture" ? await c.capture(hash) : await c.voidUndelivered(hash); await tx.wait();
+    say(`${how === "capture" ? "Captured to the seller" : "Returned to the buyer"}, by you. ${chainLink(tx.hash, "transaction")}`, "good"); mine(); loadRecord();
+  } catch (e) { say(reasonOf(e), "bad"); }
+}
+
+// ------------------------------------------------------------------ the record
+let shown = 20;
+async function loadRecord() {
+  const n = Number(await op.paymentCount());
+  const ids = [...Array(n).keys()].reverse();
+  const all = await pool(ids, 4, async (i) => { const h = await op.paymentHashes(i); return { i, h, f: await op.facts(h) }; });
+  const count = (s) => all.filter((p) => STATUS[Number(p.f.status)] === s).length;
+  const rulings = (await pool(all.filter((p) => [4, 5].includes(Number(p.f.status))), 4, (p) => op.ruling(p.h))).filter((r) => r.ruled).length;
+  $("s-pay").textContent = n; $("s-cap").textContent = count("Captured"); $("s-void").textContent = count("Voided"); $("s-court").textContent = rulings;
+  const rows = await pool(all.slice(0, shown), 4, async (p) => ({ ...p, request: await op.requestOf(p.h) }));
+  const title = (id) => LISTINGS.find((l) => l.id === Number(id))?.title || "listing #" + id;
+  $("rec").innerHTML = `<div class="r h"><span>#</span><span>Service</span><span>Buyer</span><span>Amount</span><span>Request</span><span>Status</span></div>` +
+    rows.map((p) => { const st = shownStatus(p.f); return `
+      <div class="r" data-h="${p.h}"><span class="mono">${p.i}</span><span>${esc(title(p.f.listingId))}</span><span class="mono">${short(p.f.payer)}</span><span class="mono">${usd(p.f.amount)}</span><span>${esc(String(p.request || "(not delivered)").slice(0, 38))}</span><span><span class="stamp ${st}">${st}</span></span></div>`; }).join("") +
+    (n > shown ? `<div class="more"><button class="btn small ghost" id="more">Show more</button></div>` : "");
+  document.querySelectorAll("#rec .r[data-h]").forEach((r) => (r.onclick = () => openRow(r)));
+  if ($("more")) $("more").onclick = () => { shown += 20; loadRecord(); };
+}
+async function openRow(row) {
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains("open")) { next.remove(); return; }
+  const h = row.dataset.h;
+  const [f, offer, request, response, ruling] = await Promise.all([op.facts(h), op.offerOf(h), op.requestOf(h), op.responseOf(h), op.ruling(h)]);
+  const l = LISTINGS.find((x) => x.id === Number(f.listingId));
+  const st = shownStatus(f);
+  let kase = null;
+  if (ruling.ruled) { try { kase = JSON.parse(await reader.readContract({ address: DEP.court, functionName: "case", args: [h] })); } catch {} }
+  const el = document.createElement("div"); el.className = "open";
+  const late = l && st === "Held" && nowS() > 0, windowOver = l && Number(f.deliveredAt) + l.window <= nowS();
+  el.innerHTML = `
+    <div><h4>The offer, by the seller</h4><div class="txt">${esc(offer)}</div></div>
+    <div><h4>The request, signed by the buyer</h4><div class="txt">${esc(request || "(recorded on delivery)")}</div></div>
+    <div><h4>The response, recorded by the seller</h4><div class="txt">${esc(response || "(not delivered)")}</div></div>
+    <div class="verdict">
+      ${kase ? `<span class="stamp ${kase.verdict}">${kase.verdict}</span><span>${esc(kase.why)}</span><span class="mono">put to the court by ${short(kase.by)}</span>` : `<span class="mono">payment ${short(h)} &middot; seller ${short(f.seller)}</span>`}
+      ${st === "Expired" ? `<span>Past its capture deadline: nobody can capture it, and the buyer can reclaim it from Coinbase's escrow directly.</span>` : ""}
+      ${st === "Delivered" && windowOver ? `<button class="btn small" data-act="capture">Capture to the seller</button>` : ""}
+      ${st === "Held" && late ? `<button class="btn small ghost" data-act="void">Return undelivered</button>` : ""}
+      ${st === "Disputed" && !ruling.ruled ? `<button class="btn small blue" data-act="court">Ask Internet Court</button>` : ""}
+      <span class="mono" data-out></span>
+    </div>`;
+  row.after(el);
+  el.querySelectorAll("[data-act]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation();
+    const out = (t) => (el.querySelector("[data-out]").innerHTML = t);
+    if (b.dataset.act === "court") askCourt(h, out); else settle(h, b.dataset.act === "capture" ? "capture" : "void").then(() => out("see the status above")); }));
+}
+
+// ------------------------------------------------------------------ try to cheat it
+const P = PROOF.payments, Z = ZeroHash;
+const tuple = (pi) => [pi.operator, pi.payer, pi.receiver, pi.token, BigInt(pi.maxAmount), BigInt(pi.preApprovalExpiry), BigInt(pi.authorizationExpiry), BigInt(pi.refundExpiry), pi.minFeeBps, pi.maxFeeBps, pi.feeReceiver, BigInt(pi.salt)];
+const opI = new Interface(OP_ABI), escI = new Interface(ESCROW_ABI);
+const ATTACKS = [
+  { t: "The seller rules its own case", d: "The seller of a disputed payment calls rule() on the operator, saying it delivered.", who: ["seller", PROOF.accounts.weather_seller],
+    call: () => ({ to: DEP.operator, data: opI.encodeFunctionData("rule", [P.A.hash, true, Z]) }) },
+  { t: "The buyer refunds itself", d: "The buyer calls rule() on a payment it paid, saying nothing was delivered.", who: ["buyer", PROOF.accounts.buyer],
+    call: () => ({ to: DEP.operator, data: opI.encodeFunctionData("rule", [P.C.hash, false, Z]) }) },
+  { t: "The seller reaches into the escrow", d: "The seller skips the operator and asks Coinbase's escrow to pay it directly.", who: ["seller", PROOF.accounts.weather_seller],
+    call: () => ({ to: DEP.auth_capture_escrow, data: escI.encodeFunctionData("capture", [tuple(P.E.payment_info), BigInt(P.E.payment_info.maxAmount), 0, ZeroAddress]) }) },
+  { t: "Redirect the buyer's payment", d: "A stranger takes a buyer's signed payment and names a different seller as the one to be paid.", who: ["stranger", PROOF.accounts.budget_seller],
+    call: () => ({ to: DEP.operator, data: opI.encodeFunctionData("authorize", [tuple({ ...P.D.payment_info, receiver: PROOF.accounts.budget_seller }), BigInt(P.D.payment_info.maxAmount), DEP.erc3009_collector, P.D.signature]) }) },
+  { t: "Slip a fee in", d: "The relayer adds a 1% fee to its own address on the buyer's payment.", who: ["relayer", PROOF.accounts.budget_seller],
+    call: () => ({ to: DEP.operator, data: opI.encodeFunctionData("authorize", [tuple({ ...P.D.payment_info, maxFeeBps: 100, feeReceiver: PROOF.accounts.budget_seller }), BigInt(P.D.payment_info.maxAmount), DEP.erc3009_collector, P.D.signature]) }) },
+  { t: "Pay less than the price", d: "A payment for one unit against a listing that costs 0.25 tUSDC.", who: ["buyer", PROOF.accounts.buyer],
+    call: () => ({ to: DEP.operator, data: opI.encodeFunctionData("authorize", [tuple({ ...P.D.payment_info, maxAmount: "1" }), 1n, DEP.erc3009_collector, P.D.signature]) }) },
+  { t: "Rewrite the response after payment", d: "The seller records a new response on a payment it has already been paid for.", who: ["seller", PROOF.accounts.weather_seller],
+    call: () => ({ to: DEP.operator, data: opI.encodeFunctionData("deliver", [P.C.hash, "Izmir", Z, "something else"]) }) },
+  { t: "The court rules twice", d: "The court's own address calls rule() again on a payment it already settled.", who: ["court", DEP.court],
+    call: () => ({ to: DEP.operator, data: opI.encodeFunctionData("rule", [P.A.hash, false, Z]) }) },
+  { t: "Close a rival's listing", d: "One seller tries to stop the other seller's listing from taking payments.", who: ["other seller", PROOF.accounts.budget_seller],
+    call: () => ({ to: DEP.operator, data: opI.encodeFunctionData("close", [0]) }) },
+];
+$("attacks").innerHTML = ATTACKS.map((a, i) => `<div class="atk"><b>${esc(a.t)}</b><p>${esc(a.d)}</p><span class="who">from the ${a.who[0]}, ${short(a.who[1])}</span><button class="btn small ghost" data-atk="${i}">Try it</button><span class="out" id="atk-${i}"></span></div>`).join("");
+document.querySelectorAll("[data-atk]").forEach((b) => (b.onclick = async () => {
+  const a = ATTACKS[Number(b.dataset.atk)], out = $("atk-" + b.dataset.atk);
+  out.className = "out"; out.textContent = "calling GenLayer Chain ...";
+  try { await chain.call({ ...a.call(), from: a.who[1] }); out.className = "out bad"; out.textContent = "it went through"; }
+  catch (e) { out.className = "out good"; out.textContent = "refused: " + reasonOf(e); }
+}));
+
+// ------------------------------------------------------------------ proof and contracts
+$("proof-title").textContent = `${PROOF.passed} of ${PROOF.total} checks passed on Bradbury.`;
+$("proof-list").innerHTML = PROOF.checks.map((c) => `<div><i class="${c.ok ? "" : "no"}">${c.ok ? "PASS" : "FAIL"}</i><span>${esc(c.name)}${c.note && /court rules/.test(c.name) ? `<br/><small style="color:var(--muted)">${esc(c.note.replace(/^FINALIZED, /, ""))}</small>` : ""}</span>${c.tx ? (c.gl ? glLink(c.tx, "round") : chainLink(c.tx, "tx")) : "<span></span>"}</div>`).join("");
+const addr = (a, gl) => `<a class="mono" href="${gl ? EXPLORER : CHAIN_EXPLORER}/address/${a}" target="_blank" rel="noopener">${a}</a>`;
+$("addr").innerHTML = [
+  ["Internet Court (Recourse)", addr(DEP.court, true), "Intelligent Contract on GenLayer Bradbury"],
+  ["RecourseOperator", addr(DEP.operator), "the x402 custom operator, on GenLayer Chain"],
+  ["AuthCaptureEscrow", addr(DEP.auth_capture_escrow) + '<span class="tag">MATCH* Coinbase, Base and Base Sepolia</span>', "base/commerce-payments, unmodified"],
+  ["ERC3009PaymentCollector", addr(DEP.erc3009_collector) + '<span class="tag">MATCH* Coinbase, Base and Base Sepolia</span>', "base/commerce-payments, unmodified"],
+  ["Test USDC", addr(DEP.test_usdc), "EIP-3009 test dollar, free to mint"],
+].map((r) => `<tr><td>${r[0]}</td><td>${r[1]}<br/><small style="color:var(--muted)">${r[2]}</small></td></tr>`).join("");
+
+await loadListings().catch((e) => ($("listings").innerHTML = `<div class="listing">Could not read the listings: ${esc(reasonOf(e))}</div>`));
+await mine().catch(() => {});
+await loadRecord().catch((e) => console.warn("record", e));
+if (window.ethereum) window.ethereum.request({ method: "eth_accounts" }).then((a) => { if (a && a[0]) { account = a[0]; $("connect").textContent = short(account); balance(); mine(); } }).catch(() => {});
+// Light polling: the record is read again only when a payment is added or one on screen can still change.
+let lastCount = -1;
+setInterval(async () => {
+  try {
+    const n = Number(await op.paymentCount());
+    const open = [...document.querySelectorAll("#rec .stamp")].some((el) => /Held|Delivered|Disputed/.test(el.textContent));
+    if (n !== lastCount || open) { lastCount = n; await loadRecord(); }
+    const m = store.get("mine");
+    if (m && !/Captured|Voided/.test($("mine").textContent)) await mine();
+  } catch {}
+}, 45000);
+</script>
+</body>
+</html>

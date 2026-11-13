@@ -1,0 +1,126 @@
+<body>
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 3h18v26l-3-2-3 2-3-2-3 2-3-2-3 2z" fill="#fffdf8" stroke="#1c1a17" stroke-width="2" stroke-linejoin="round"/><path d="M11 10h10M11 15h10" stroke="#1c1a17" stroke-width="2" stroke-linecap="round"/><path d="M12.5 21.5l-2.5-2.5 2.5-2.5M10 19h8a3 3 0 0 0 0-6" fill="none" stroke="#2442c4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Recourse
+    </a>
+    <nav class="nav"><a href="#counter">Counter</a><a href="#record">Record</a><a href="#cheat">Try to cheat</a><a href="#proof">Proof</a><a href="#build">How it is built</a></nav>
+    <div class="right"><span class="chip" id="bal">GenLayer Bradbury</span><button class="btn small" id="connect">Connect wallet</button></div>
+  </div>
+</header>
+
+<section class="hero" id="top">
+  <div class="wrap">
+    <div>
+      <div class="kicker">x402 auth-capture &middot; Internet Court &middot; GenLayer Bradbury</div>
+      <h1>Pay an agent.<br/>Keep a <em>way back.</em></h1>
+      <p class="lede">An x402 payment that did not get what it paid for can be taken back. The money waits in Coinbase's own escrow,
+        the seller is paid when the dispute window closes, and if the buyer disputes, Internet Court reads the seller's offer,
+        the request and the response, and moves the money itself. No relayer, no admin, no key that decides.</p>
+      <div class="cta"><a class="btn blue" href="#counter">Buy a call</a><a class="btn ghost" href="#record">See every payment</a><a class="btn ghost" href="https://github.com/JspIIV/x402-recourse" target="_blank" rel="noopener">Code</a></div>
+      <div class="stats">
+        <div><b id="s-pay">..</b><span>payments held</span></div>
+        <div><b id="s-cap">..</b><span>paid to sellers</span></div>
+        <div><b id="s-void">..</b><span>returned to buyers</span></div>
+        <div><b id="s-court">..</b><span>court rulings</span></div>
+      </div>
+    </div>
+    <div class="receipt" id="hero-receipt">
+      <div class="head"><b>RECOURSE</b>an x402 payment, start to end</div>
+      <div class="ln"><span>service</span><span>Weather now</span></div>
+      <div class="ln"><span>request</span><span>Ankara</span></div>
+      <div class="ln"><span>price</span><span>0.25 tUSDC</span></div>
+      <div class="sep"></div>
+      <ul class="steps" id="hero-steps">
+        <li><span>402, signed once</span><i>buyer</i></li>
+        <li><span>HELD in escrow</span><i>relayer</i></li>
+        <li><span>DELIVERED on chain</span><i>seller</i></li>
+        <li><span>DISPUTED in window</span><i>buyer</i></li>
+        <li><span>RULED by the court</span><i>validators</i></li>
+      </ul>
+      <span class="stamp big" id="hero-stamp">Voided</span>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="how">
+  <div class="wrap">
+    <div class="sh"><div><div class="kicker">The lifecycle</div><h2>The seller is paid by default.<br/>The buyer has one way back.</h2></div>
+      <p>x402's <code>auth-capture</code> scheme holds a payment before it pays. In every operator type the spec defines, the seller's side decides
+        capture or void. Its <code>"custom"</code> type allows arbitration. Recourse is that operator, with Internet Court deciding.</p></div>
+    <div class="how">
+      <div><b>01 &middot; THE 402</b><h3>One signature</h3><p>The buyer signs one EIP-3009 authorization. The request itself is committed into the payment's salt, so the record of what was asked is the buyer's own.</p></div>
+      <div><b>02 &middot; THE HOLD</b><h3>Coinbase's escrow</h3><p>The money goes to <code>AuthCaptureEscrow</code>, unmodified. It can only be paid to the listed seller or returned to the buyer.</p></div>
+      <div><b>03 &middot; THE WINDOW</b><h3>Silence pays</h3><p>The seller records its response on chain. If the buyer says nothing in the window, anybody captures the payment to the seller.</p></div>
+      <div><b>04 &middot; THE COURT</b><h3>A dispute is judged</h3><p>Validators read the seller's offer, the request and the response. DELIVERED pays the seller, NOT_DELIVERED returns the money. The court sends it.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="band alt" id="counter">
+  <div class="wrap">
+    <div class="sh"><div><div class="kicker">The counter</div><h2>Two sellers. The same offer.<br/>One keeps it.</h2></div>
+      <p>Both listings are on chain, each with its seller's own words about what a paid call returns. Pay either one with test dollars,
+        read what comes back, and dispute it if it is not what was offered.</p></div>
+    <div class="wallet">
+      <span class="grow" id="wstatus">Reading needs no wallet. To buy, connect MetaMask: the page adds GenLayer Bradbury (chain 4221) for you.</span>
+      <button class="btn small ghost" id="fund">Get 5 test USDC</button>
+    </div>
+    <div class="listings" id="listings"><div class="listing">Reading the listings from chain...</div></div>
+    <div class="yours">
+      <div class="receipt" id="mine"><div class="head"><b>YOUR RECEIPT</b>nothing bought yet</div><div class="hint">Buy a call above. Signing costs no gas; disputing and asking the court do.</div></div>
+      <div class="panel">
+        <h3>Your payment</h3>
+        <div class="track" id="track"><span>Signed</span><span>Held</span><span>Delivered</span><span>Disputed</span><span>Settled</span></div>
+        <div class="actions">
+          <button class="btn red" id="dispute" disabled>Dispute it</button>
+          <button class="btn blue" id="ask" disabled>Ask Internet Court</button>
+          <button class="btn ghost" id="settle" disabled>Capture after the window</button>
+        </div>
+        <div class="status" id="status">The dispute window is five minutes after delivery. The court rules in a few minutes and sends its verdict to the operator itself.</div>
+        <div class="hint">Disputing a good delivery is allowed, and the court will say DELIVERED. Anything either side writes to the judges, in the request or in the response, is read as manipulation, not evidence.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="record">
+  <div class="wrap">
+    <div class="sh"><div><div class="kicker">The record</div><h2>Every payment the operator holds.</h2></div>
+      <p>Read from the operator on GenLayer Chain and from the court on GenLayer. Open a row for the offer, the request, the response and the ruling. A row past its window can be settled by anybody, you included.</p></div>
+    <div class="rec" id="rec"><div class="r h"><span>#</span><span>Service</span><span>Buyer</span><span>Amount</span><span>Request</span><span>Status</span></div><div class="more">Reading...</div></div>
+  </div>
+</section>
+
+<section class="band alt" id="cheat">
+  <div class="wrap">
+    <div class="sh"><div><div class="kicker">Try to cheat it</div><h2>Each attack runs against the live contracts.</h2></div>
+      <p>Every card sends a real <code>eth_call</code> to GenLayer Chain from the address that would try it, on payments from the proof. Nothing is spent. The contracts answer.</p></div>
+    <div class="attacks" id="attacks"></div>
+  </div>
+</section>
+
+<section class="band" id="proof">
+  <div class="wrap">
+    <div class="sh"><div><div class="kicker">The proof</div><h2 id="proof-title">The whole lifecycle, on chain.</h2></div>
+      <p>One script, <code>scripts/prove.mjs</code>: real x402 calls over HTTP, real money in the escrow, real Internet Court rounds. Five payments, every way out, and the balances counted to the unit.</p></div>
+    <div class="proof" id="proof-list"></div>
+  </div>
+</section>
+
+<section class="band alt" id="build">
+  <div class="wrap">
+    <div class="sh"><div><div class="kicker">How it is built</div><h2>Coinbase's escrow, unmodified.<br/>Internet Court as its operator.</h2></div>
+      <p>The escrow and its collector are vendored from <code>base/commerce-payments</code> at a pinned commit and match Coinbase's own deployments on Base and Base Sepolia in every executable byte (<code>scripts/verify_evm.mjs</code>).</p></div>
+    <div class="flow">
+      <div><small>HTTP</small><h4>x402 sellers</h4><p>Answer 402 with auth-capture terms naming the operator, relay the buyer's signature, run the service, record the response.</p></div>
+      <div><small>GenLayer Chain</small><h4>RecourseOperator</h4><p>The custom operator: listings, the request commitment, delivery, the window, disputes. Captures or voids only through the escrow.</p></div>
+      <div><small>GenLayer Chain &middot; Coinbase</small><h4>AuthCaptureEscrow</h4><p>Holds the money. Pays the listed seller or returns it to the payer, nothing else. The buyer can always reclaim after the deadline.</p></div>
+      <div class="court"><small>GenLayer &middot; Intelligent Contract</small><h4>Internet Court</h4><p>Reads the case from the operator, rules in a validator round, and calls <code>rule()</code> on the operator itself when final.</p></div>
+    </div>
+    <table class="addr" id="addr"></table>
+  </div>
+</section>
+
+<footer><div class="wrap"><span>Recourse &middot; MIT &middot; GenLayer Bradbury testnet, test dollars only.</span><span><a href="https://github.com/JspIIV/x402-recourse" target="_blank" rel="noopener">github.com/JspIIV/x402-recourse</a></span></div></footer>
