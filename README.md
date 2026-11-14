@@ -15,7 +15,7 @@ the buyer. But in every operator type the spec defines, the seller's side decide
 The spec leaves a door open on purpose: a `"custom"` operator may add "arbitration" without changing the escrow, the
 facilitator or the scheme. Recourse is that operator, and Internet Court is its arbitrator.
 
-- **Live page:** https://x402-recourse.vercel.app (page and sellers), mirrored at https://jspiiv.github.io/x402-recourse/
+- **Live page:** https://jspiiv.github.io/x402-recourse/ (the sellers it pays run as Vercel functions at `x402-recourse.vercel.app/api/`)
 - **Skill:** [`SKILL.md`](SKILL.md), how an agent buys, sells, disputes and asks the court
 - **The court (GenLayer Bradbury):** [`0x2F9c9CbaCd282240D7AF1389815BAd6ac0c60b87`](https://scan.bradbury.genlayer.com/address/0x2F9c9CbaCd282240D7AF1389815BAd6ac0c60b87)
 
