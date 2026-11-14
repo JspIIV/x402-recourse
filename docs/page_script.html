@@ -4,17 +4,18 @@ import { createClient } from "https://esm.sh/genlayer-js@2.0.0-rc.2?bundle";
 import { testnetBradbury } from "https://esm.sh/genlayer-js@2.0.0-rc.2/chains?bundle";
 import { BrowserProvider, JsonRpcProvider, Contract, Interface, AbiCoder, formatUnits, ZeroHash, ZeroAddress } from "https://esm.sh/ethers@6.13.4";
 import { signPayment, unb64, b64 } from "./x402.mjs";
+import { ChainProvider, CHAIN_RPCS } from "./rpc.mjs";
 
 const DEP = __DEP__;
 const PROOF = __PROOF__;
 // Same origin when the page is served with its sellers (Vercel); the deployed sellers otherwise (GitHub Pages).
 const API = location.hostname.endsWith("github.io") ? "__SELLERS__" : location.origin;
 const RPC = "https://rpc-bradbury.genlayer.com";
-const CHAIN_RPC = "https://rpc.testnet-chain.genlayer.com";
+const CHAIN_RPC = CHAIN_RPCS[0];
 const EXPLORER = "https://scan.bradbury.genlayer.com";
 const CHAIN_EXPLORER = "https://scan.testnet-chain.genlayer.com";
 const CHAIN_ID_HEX = "0x107d";
-const CHAIN_PARAMS = { chainId: CHAIN_ID_HEX, chainName: "GenLayer Bradbury", nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 }, rpcUrls: [CHAIN_RPC], blockExplorerUrls: [CHAIN_EXPLORER] };
+const CHAIN_PARAMS = { chainId: CHAIN_ID_HEX, chainName: "GenLayer Bradbury", nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 }, rpcUrls: CHAIN_RPCS, blockExplorerUrls: [CHAIN_EXPLORER] };
 const PI = "tuple(address operator,address payer,address receiver,address token,uint120 maxAmount,uint48 preApprovalExpiry,uint48 authorizationExpiry,uint48 refundExpiry,uint16 minFeeBps,uint16 maxFeeBps,address feeReceiver,uint256 salt)";
 const OP_ABI = [
   "function listingCount() view returns (uint256)",
@@ -36,21 +37,7 @@ const STATUS = ["None", "Held", "Delivered", "Disputed", "Captured", "Voided"];
 const shownStatus = (f) => { const st = STATUS[Number(f.status)]; return ["Held", "Delivered", "Disputed"].includes(st) && Math.floor(Date.now() / 1000) > Number(f.captureDeadline) ? "Expired" : st; };
 
 // The public RPC rate-limits bursts, so reads go in small batches, a few at a time.
-class PatientProvider extends JsonRpcProvider {
-  // A read the public RPC throttles comes back as an error with no revert data; it is tried again, a few times.
-  async send(method, params) {
-    for (let i = 0; ; i++) {
-      try { return await super.send(method, params); }
-      catch (e) {
-        const said = String(e?.message || "") + " " + JSON.stringify(e?.info?.error || e?.error || {});
-        const throttled = /-32017|rate limit|429|too many|failed to fetch|timeout|missing revert data/i.test(said);
-        if (!throttled || i >= 4 || method === "eth_sendRawTransaction") throw e;
-        await new Promise((r) => setTimeout(r, 1200 * (i + 1)));
-      }
-    }
-  }
-}
-const chain = new PatientProvider(CHAIN_RPC, 4221, { staticNetwork: true, batchMaxCount: 8, batchStallTime: 20 });
+const chain = new ChainProvider();
 async function pool(items, n, fn) {
   const out = new Array(items.length); let next = 0;
   await Promise.all([...Array(Math.min(n, items.length))].map(async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); } }));

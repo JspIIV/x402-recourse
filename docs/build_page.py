@@ -49,4 +49,6 @@ head = """<!doctype html>
 open(os.path.join(HERE, "index.html"), "w", encoding="utf-8", newline="\n").write(head + body + script)
 lib = read(ROOT, "lib", "x402.mjs").replace("from 'ethers';", "from 'https://esm.sh/ethers@6.13.4';")
 open(os.path.join(HERE, "x402.mjs"), "w", encoding="utf-8", newline="\n").write(lib)
-print("docs/index.html and docs/x402.mjs written", "(sellers: " + (sellers or "same origin") + ")")
+rpc = read(ROOT, "lib", "rpc.mjs").replace("from 'ethers';", "from 'https://esm.sh/ethers@6.13.4';")
+open(os.path.join(HERE, "rpc.mjs"), "w", encoding="utf-8", newline="\n").write(rpc)
+print("docs/index.html, docs/x402.mjs and docs/rpc.mjs written", "(sellers: " + (sellers or "same origin") + ")")
