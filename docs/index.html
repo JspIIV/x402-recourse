@@ -344,7 +344,7 @@ const OP_ABI = [
   "function deliver(bytes32,string,bytes32,string)", "function close(uint32)",
   `function authorize(${PI} p,uint256 amount,address tokenCollector,bytes collectorData)`,
 ];
-const ESCROW_ABI = [`function capture(${PI} p,uint256 amount,uint16 feeBps,address feeReceiver)`,
+const ESCROW_ABI = [`function capture(${PI} p,uint256 amount,uint256 feeAmount,address feeReceiver)`,
   "error InvalidSender(address sender, address expected)", "error PaymentAlreadyCollected(bytes32 paymentInfoHash)", "error AfterAuthorizationExpiry(uint48 timestamp, uint48 expiry)", "error BeforeAuthorizationExpiry(uint48 timestamp, uint48 expiry)", "error ZeroAuthorization(bytes32 paymentInfoHash)"];
 const USDC_ABI = ["function mint(address to,uint256 amount)", "function balanceOf(address) view returns (uint256)"];
 const STATUS = ["None", "Held", "Delivered", "Disputed", "Captured", "Voided"];
