@@ -65,8 +65,8 @@ h1 em { font-style: normal; color: var(--blue); }
 .receipt .head { text-align: center; border-bottom: 1px dashed var(--line); padding-bottom: 12px; margin-bottom: 12px; }
 .receipt .head b { display: block; font: 700 16px var(--sans); color: var(--ink); letter-spacing: .02em; }
 .receipt .ln { display: flex; justify-content: space-between; gap: 14px; }
-.receipt .ln span:first-child { color: var(--muted); }
-.receipt .ln span:last-child { text-align: right; overflow-wrap: anywhere; }
+.receipt .ln > span:first-child { color: var(--muted); }
+.receipt .ln > span:last-child { text-align: right; overflow-wrap: anywhere; }
 .receipt .sep { border-top: 1px dashed var(--line); margin: 10px 0; }
 .receipt .txt { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); background: #faf6ec; border-left: 3px solid var(--line); padding: 8px 10px; margin: 6px 0 4px; }
 .hero .receipt { transform: rotate(1.2deg); width: 100%; max-width: 430px; margin-left: auto; font-size: 14px; }
