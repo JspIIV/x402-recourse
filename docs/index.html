@@ -475,16 +475,19 @@ async function buy(slug) {
 }
 
 // ------------------------------------------------------------------ your receipt
-let tick = null;
+let tick = null, mineSeq = 0;
 async function mine() {
   const m = store.get("mine");
   if (!m) return;
+  // Only the latest read may paint: an older refresh that finishes late must not put back a stale status.
+  const seq = ++mineSeq;
   const [f, request, response, offer, ruling] = await Promise.all([op.facts(m.hash), op.requestOf(m.hash), op.responseOf(m.hash), op.offerOf(m.hash), op.ruling(m.hash)]);
   const l = LISTINGS.find((x) => x.id === Number(f.listingId)) || { window: 300, title: "" };
   const st = STATUS[Number(f.status)];
   const closes = Number(f.deliveredAt) + l.window;
   let kase = null;
   if (ruling.ruled) { try { kase = JSON.parse(await reader.readContract({ address: DEP.court, functionName: "case", args: [m.hash] })); } catch {} }
+  if (seq !== mineSeq) return;
   $("mine").innerHTML = `
     <div class="head"><b>YOUR RECEIPT</b>${esc(l.title)}</div>
     <div class="ln"><span>payment</span><span>${short(m.hash)}</span></div>
